@@ -2,8 +2,13 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#define private public
 #include "mmu.h"
 #include "pagetable.h"
+#undef private
+#include <sstream>
+#include <vector>
+#include <algorithm>
 
 // 64 MB (64 * 1024 * 1024)
 #define PHYSICAL_MEMORY 67108864
@@ -14,6 +19,7 @@ void allocateVariable(uint32_t pid, std::string var_name, DataType type, uint32_
 void setVariable(uint32_t pid, std::string var_name, uint32_t offset, void *value, Mmu *mmu, PageTable *page_table, uint8_t *memory);
 void freeVariable(uint32_t pid, std::string var_name, Mmu *mmu, PageTable *page_table);
 void terminateProcess(uint32_t pid, Mmu *mmu, PageTable *page_table);
+uint32_t getTypeSize(DataType type);
 
 int main(int argc, char **argv)
 {
@@ -43,7 +49,215 @@ int main(int argc, char **argv)
     {
         // Handle command
         // TODO: implement this!
+        std::stringstream ss(command);
+        std::string action;
+        ss >> action;
 
+        if (action == "create")
+        {
+            int text_size;
+            int data_size;
+            ss >> text_size >> data_size;
+
+            createProcess(text_size, data_size, mmu, page_table);
+        }
+        else if (action == "allocate")
+        {
+            uint32_t pid;
+            std::string var_name;
+            std::string type_string;
+            uint32_t num_elements;
+
+            ss >> pid >> var_name >> type_string >> num_elements;
+
+            DataType type;
+
+            if (type_string == "char")
+                type = DataType::Char;
+            else if (type_string == "short")
+                type = DataType::Short;
+            else if (type_string == "int")
+                type = DataType::Int;
+            else if (type_string == "long")
+                type = DataType::Long;
+            else if (type_string == "float")
+                type = DataType::Float;
+            else if (type_string == "double")
+                type = DataType::Double;
+            else
+            {
+                std::cout << "error: command not recognized" << std::endl;
+                std::cout << "> ";
+                std::getline(std::cin, command);
+                continue;
+            }
+
+            allocateVariable(pid, var_name, type, num_elements, mmu, page_table);
+        }
+        else if (action == "set")
+        {
+            uint32_t pid;
+            std::string var_name;
+            uint32_t offset;
+
+            ss >> pid >> var_name >> offset;
+
+            std::string value;
+            uint32_t current_offset = offset;
+
+            while (ss >> value)
+            {
+                setVariable(pid, var_name, current_offset, &value, mmu, page_table, memory);
+                current_offset++;
+            }
+        }
+        else if (action == "free")
+        {
+            uint32_t pid;
+            std::string var_name;
+
+            ss >> pid >> var_name;
+
+            freeVariable(pid, var_name, mmu, page_table);
+        }
+        else if (action == "terminate")
+        {
+            uint32_t pid;
+
+            ss >> pid;
+
+            terminateProcess(pid, mmu, page_table);
+        }
+     else if (action == "print")
+    {
+        std::string object;
+        ss >> object;
+
+        if (object == "mmu")
+        {
+            mmu->print();
+        }
+        else if (object == "page")
+        {
+            page_table->print();
+        }
+        else if (object == "processes")
+        {
+            for (Process *p : mmu->_processes)
+            {
+                std::cout << p->pid << std::endl;
+            }
+        }
+        else
+        {
+            size_t colon = object.find(":");
+
+            if (colon == std::string::npos)
+            {
+                std::cout << "error: command not recognized" << std::endl;
+                continue;
+            }
+
+            uint32_t pid = std::stoi(object.substr(0, colon));
+            std::string var_name = object.substr(colon + 1);
+
+            Process *proc = NULL;
+
+            for (Process *p : mmu->_processes)
+            {
+                if (p->pid == pid)
+                {
+                    proc = p;
+                    break;
+                }
+            }
+
+            if (proc == NULL)
+            {
+                std::cout << "error: process not found" << std::endl;
+                continue;
+            }
+
+            Variable *var = NULL;
+
+            for (Variable *v : proc->variables)
+            {
+                if (v->name == var_name && v->type != DataType::FreeSpace)
+                {
+                    var = v;
+                    break;
+                }
+            }
+
+            if (var == NULL)
+            {
+                std::cout << "error: variable not found" << std::endl;
+                continue;
+            }
+
+            uint32_t type_size = getTypeSize(var->type);
+            uint32_t count = var->size / type_size;
+
+            uint32_t to_print = std::min(count, (uint32_t)4);
+
+            for (uint32_t i = 0; i < to_print; i++)
+            {
+                uint32_t virtual_address = var->virtual_address + i * type_size;
+                int physical_address = page_table->getPhysicalAddress(pid, virtual_address);
+
+                if (var->type == DataType::Char)
+                {
+                    char v;
+                    memcpy(&v, memory + physical_address, sizeof(char));
+                    std::cout << v;
+                }
+                else if (var->type == DataType::Short)
+                {
+                    short v;
+                    memcpy(&v, memory + physical_address, sizeof(short));
+                    std::cout << v;
+                }
+                else if (var->type == DataType::Int)
+                {
+                    int v;
+                    memcpy(&v, memory + physical_address, sizeof(int));
+                    std::cout << v;
+                }
+                else if (var->type == DataType::Long)
+                {
+                    long v;
+                    memcpy(&v, memory + physical_address, sizeof(long));
+                    std::cout << v;
+                }
+                else if (var->type == DataType::Float)
+                {
+                    float v;
+                    memcpy(&v, memory + physical_address, sizeof(float));
+                    std::cout << v;
+                }
+                else if (var->type == DataType::Double)
+                {
+                    double v;
+                    memcpy(&v, memory + physical_address, sizeof(double));
+                    std::cout << v;
+                }
+
+                if (i < to_print - 1)
+                    std::cout << ", ";
+            }
+
+            if (count > 4)
+            {
+                std::cout << ", ... [" << count << " items]";
+            }
+
+            std::cout << std::endl;        
+        }
+    }
+        else
+        {
+            std::cout << "error: command not recognized" << std::endl;
+        }
         // Get next command
         std::cout << "> ";
         std::getline(std::cin, command);
@@ -76,40 +290,275 @@ void printStartMessage(int page_size)
 
 void createProcess(int text_size, int data_size, Mmu *mmu, PageTable *page_table)
 {
-    // TODO: implement this!
-    //   - create new process in the MMU
-    //   - allocate new variables for the <TEXT>, <GLOBALS>, and <STACK>
-    //   - print pid
+    uint32_t pid = mmu->createProcess();
+
+    uint32_t text_addr = 0;
+    uint32_t globals_addr = text_addr + text_size;
+    uint32_t stack_addr = globals_addr + data_size;
+
+    // Add variables to MMU
+    mmu->addVariableToProcess(pid, "<TEXT>", DataType::Char, text_size, text_addr);
+    mmu->addVariableToProcess(pid, "<GLOBALS>", DataType::Char, data_size, globals_addr);
+    mmu->addVariableToProcess(pid, "<STACK>", DataType::Char, 65536, stack_addr);
+
+    // Add pages to page table
+    uint32_t total_size = text_size + data_size + 65536;
+
+    int first_page = 0;
+    int last_page = (total_size - 1) / page_table->_page_size;
+
+    for (int page = first_page; page <= last_page; page++)
+    {
+        page_table->addEntry(pid, page);
+    }
+
+    std::cout << pid << std::endl;
 }
 
 void allocateVariable(uint32_t pid, std::string var_name, DataType type, uint32_t num_elements, Mmu *mmu, PageTable *page_table)
 {
-    // TODO: implement this!
-    //   - find first free space within a page already allocated to this process that is large enough to fit the new variable
-    //   - if no hole is large enough, allocate new page(s)
-    //   - insert variable into MMU
-    //   - print virtual memory address
+    Process *proc = NULL;
+
+    for (Process *p : mmu->_processes)
+    {
+        if (p->pid == pid)
+        {
+            proc = p;
+            break;
+        }
+    }
+
+    if (proc == NULL)
+    {
+        std::cout << "error: process not found" << std::endl;
+        return;
+    }
+
+    for (Variable *v : proc->variables)
+    {
+        if (v->name == var_name)
+        {
+            std::cout << "error: variable already exists" << std::endl;
+            return;
+        }
+    }
+
+    uint32_t size = getTypeSize(type) * num_elements;
+
+    uint32_t address = 0;
+
+    for (Variable *v : proc->variables)
+    {
+        if (v->type != DataType::FreeSpace)
+        {
+            uint32_t end = v->virtual_address + v->size;
+            if (end > address)
+            {
+                address = end;
+            }
+        }
+    }
+
+    int first_page = address / page_table->_page_size;
+    int last_page = (address + size - 1) / page_table->_page_size;
+
+    for (int page = first_page; page <= last_page; page++)
+    {
+        std::string key = std::to_string(pid) + "|" + std::to_string(page);
+
+        if (page_table->_table.count(key) == 0)
+        {
+            page_table->addEntry(pid, page);
+        }
+    }
+
+    mmu->addVariableToProcess(pid, var_name, type, size, address);
+
+    std::cout << address << std::endl;
 }
 
 void setVariable(uint32_t pid, std::string var_name, uint32_t offset, void *value, Mmu *mmu, PageTable *page_table, uint8_t *memory)
 {
-    // TODO: implement this!
-    //   - look up physical address for variable based on its virtual address / offset
-    //   - insert `value` into `memory` at physical address
-    //   * note: this function only handles a single element (i.e. you'll need to call this within a loop when setting
-    //           multiple elements of an array)
+    Process *proc = NULL;
+
+    for (Process *p : mmu->_processes)
+    {
+        if (p->pid == pid)
+        {
+            proc = p;
+            break;
+        }
+    }
+
+    if (proc == NULL)
+    {
+        std::cout << "error: process not found" << std::endl;
+        return;
+    }
+
+    Variable *var = NULL;
+
+    for (Variable *v : proc->variables)
+    {
+        if (v->name == var_name && v->type != DataType::FreeSpace)
+        {
+            var = v;
+            break;
+        }
+    }
+
+    if (var == NULL)
+    {
+        std::cout << "error: variable not found" << std::endl;
+        return;
+    }
+
+    uint32_t type_size = getTypeSize(var->type);
+
+    if ((offset + 1) * type_size > var->size)
+    {
+        std::cout << "error: index out of range" << std::endl;
+        return;
+    }
+
+    std::string text_value = *((std::string*)value);
+
+    uint32_t virtual_address = var->virtual_address + offset * type_size;
+
+    int physical_address = page_table->getPhysicalAddress(pid, virtual_address);
+
+    if (var->type == DataType::Char)
+    {
+        char v = text_value[0];
+        memcpy(memory + physical_address, &v, sizeof(char));
+    }
+    else if (var->type == DataType::Short)
+    {
+        short v = std::stoi(text_value);
+        memcpy(memory + physical_address, &v, sizeof(short));
+    }
+    else if (var->type == DataType::Int)
+    {
+        int v = std::stoi(text_value);
+        memcpy(memory + physical_address, &v, sizeof(int));
+    }
+    else if (var->type == DataType::Long)
+    {
+        long v = std::stol(text_value);
+        memcpy(memory + physical_address, &v, sizeof(long));
+    }
+    else if (var->type == DataType::Float)
+    {
+        float v = std::stof(text_value);
+        memcpy(memory + physical_address, &v, sizeof(float));
+    }
+    else if (var->type == DataType::Double)
+    {
+        double v = std::stod(text_value);
+        memcpy(memory + physical_address, &v, sizeof(double));
+    }
 }
 
 void freeVariable(uint32_t pid, std::string var_name, Mmu *mmu, PageTable *page_table)
 {
-    // TODO: implement this!
-    //   - remove entry from MMU
-    //   - free page if this variable was the only one on a given page
+    Process *proc = NULL;
+
+    for (Process *p : mmu->_processes)
+    {
+        if (p->pid == pid)
+        {
+            proc = p;
+            break;
+        }
+    }
+
+    if (proc == NULL)
+    {
+        std::cout << "error: process not found" << std::endl;
+        return;
+    }
+
+    Variable *var = NULL;
+
+    for (Variable *v : proc->variables)
+    {
+        if (v->name == var_name && v->type != DataType::FreeSpace)
+        {
+            var = v;
+            break;
+        }
+    }
+
+    if (var == NULL)
+    {
+        std::cout << "error: variable not found" << std::endl;
+        return;
+    }
+
+    proc->variables.erase(
+        std::remove(proc->variables.begin(), proc->variables.end(), var),
+        proc->variables.end()
+    );
+
+    delete var;
 }
 
 void terminateProcess(uint32_t pid, Mmu *mmu, PageTable *page_table)
 {
-    // TODO: implement this!
-    //   - remove process from MMU
-    //   - free all pages associated with given process
+    Process *proc = NULL;
+
+    for (Process *p : mmu->_processes)
+    {
+        if (p->pid == pid)
+        {
+            proc = p;
+            break;
+        }
+    }
+
+    if (proc == NULL)
+    {
+        std::cout << "error: process not found" << std::endl;
+        return;
+    }
+
+    for (Variable *v : proc->variables)
+    {
+        delete v;
+    }
+
+    proc->variables.clear();
+
+    mmu->_processes.erase(
+        std::remove(mmu->_processes.begin(), mmu->_processes.end(), proc),
+        mmu->_processes.end()
+    );
+
+    delete proc;
+
+    for (auto it = page_table->_table.begin(); it != page_table->_table.end(); )
+    {
+        std::string key = it->first;
+        std::string pid_text = key.substr(0, key.find("|"));
+
+        if ((uint32_t)std::stoi(pid_text) == pid)
+        {
+            it = page_table->_table.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+uint32_t getTypeSize(DataType type)
+{
+    if (type == DataType::Char) return 1;
+    if (type == DataType::Short) return 2;
+    if (type == DataType::Int) return 4;
+    if (type == DataType::Float) return 4;
+    if (type == DataType::Long) return 8;
+    if (type == DataType::Double) return 8;
+
+    return 0;
 }
